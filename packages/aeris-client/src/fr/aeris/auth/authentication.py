@@ -322,7 +322,7 @@ def get_token_authorization_code(
 # Backward-compatible wrappers
 # ---------------------------------------------------------------------------
 
-def getToken(master_password: str = None) -> dict:
+def get_token(master_password: str = None) -> dict:
     """
     Retrieve token using AERIS Keycloak SSO (password grant).
 
@@ -336,6 +336,9 @@ def getToken(master_password: str = None) -> dict:
         dict: Token dictionary from Keycloak.
     """
     return get_token_password_grant(AERIS_CONFIG, master_password=master_password)
+
+
+getToken = get_token
 
 
 # ---------------------------------------------------------------------------
