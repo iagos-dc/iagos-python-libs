@@ -19,7 +19,7 @@ Homepage = "https://www.aeris-data.fr"
 Repository = "https://github.com/iagos-dc/iagos-python-libs"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-mock", "responses"]
+test = ["pytest", "pytest-mock", "responses", "pytest-cov"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
