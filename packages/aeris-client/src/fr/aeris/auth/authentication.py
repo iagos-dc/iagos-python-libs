@@ -144,7 +144,7 @@ def get_token_password_grant(config: PasswordGrantConfig, master_password: str =
     """
     if not config.encrypted_username or not config.encrypted_password:
         raise ValueError(
-            f"encrypted_username or encrypted_password not set in config. "
+            "encrypted_username or encrypted_password not set in config. "
             "Fill in the corresponding fields in .env and rebuild the config."
         )
 
