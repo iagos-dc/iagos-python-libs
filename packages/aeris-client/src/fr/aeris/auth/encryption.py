@@ -1,8 +1,8 @@
 """
 Encryption utilities for securing credentials.
 
-This module provides Jasypt-compatible encryption/decryption functionality
-using PBE (Password-Based Encryption) with MD5 and DES.
+This module provides password-based encryption/decryption using
+AES-256-GCM with PBKDF2-SHA256 key derivation.
 
 Main functions:
     - jasypt_encrypt/jasypt_decrypt: Low-level encryption/decryption
@@ -10,12 +10,17 @@ Main functions:
 """
 
 import base64
-import hashlib
-from cryptography.hazmat.primitives.ciphers import Cipher, modes
-try:
-    from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
-except ImportError:
-    from cryptography.hazmat.primitives.ciphers.algorithms import TripleDES
+import os
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.hashes import SHA256
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+
+_PBKDF2_ITERATIONS = 600_000
+_SALT_SIZE = 16
+_NONCE_SIZE = 12
+_KEY_SIZE = 32
 
 
 # ============================================================================
@@ -25,57 +30,28 @@ except ImportError:
 
 def jasypt_decrypt(encrypted_text: str, password: str) -> str:
     """
-    Decrypt a string encrypted with Jasypt PBEWithMD5AndDES algorithm.
-
-    This function is compatible with Jasypt's default encryption scheme:
-    - Algorithm: PBEWithMD5AndDES
-    - Iterations: 1000
-    - Salt size: 8 bytes
+    Decrypt a string encrypted with jasypt_encrypt.
 
     Args:
-        encrypted_text: Base64-encoded encrypted string (without ENC() wrapper).
+        encrypted_text: Base64-encoded encrypted string.
         password: Password used for encryption.
 
     Returns:
         str: The decrypted plaintext string.
-
-    Examples:
-        >>> encrypted = "base64_encrypted_value"
-        >>> password = "my_secret_password"
-        >>> plaintext = jasypt_decrypt(encrypted, password)
     """
-    # Decode base64
-    encrypted_data = base64.b64decode(encrypted_text)
+    data = base64.b64decode(encrypted_text)
+    salt = data[:_SALT_SIZE]
+    nonce = data[_SALT_SIZE:_SALT_SIZE + _NONCE_SIZE]
+    ciphertext = data[_SALT_SIZE + _NONCE_SIZE:]
 
-    # Extract salt (first 8 bytes) and ciphertext
-    salt = encrypted_data[:8]
-    ciphertext = encrypted_data[8:]
-
-    # Generate key and IV using MD5 (Jasypt compatible)
-    key_iv = _generate_key_iv(password, salt)
-    key = key_iv[:8]  # DES key is 8 bytes
-    iv = key_iv[8:16]  # DES IV is 8 bytes
-
-    # Decrypt using DES
-    cipher = Cipher(TripleDES(key * 3), modes.CBC(iv))
-    decryptor = cipher.decryptor()
-    decrypted_padded = decryptor.update(ciphertext) + decryptor.finalize()
-
-    # Remove PKCS5 padding
-    padding_length = decrypted_padded[-1]
-    decrypted = decrypted_padded[:-padding_length]
-
-    return decrypted.decode('utf-8')
+    key = _derive_key(password, salt)
+    plaintext = AESGCM(key).decrypt(nonce, ciphertext, None)
+    return plaintext.decode("utf-8")
 
 
 def jasypt_encrypt(plaintext: str, password: str) -> str:
     """
-    Encrypt a string using Jasypt PBEWithMD5AndDES algorithm.
-
-    This function is compatible with Jasypt's default encryption scheme:
-    - Algorithm: PBEWithMD5AndDES
-    - Iterations: 1000
-    - Salt size: 8 bytes
+    Encrypt a string using AES-256-GCM with PBKDF2-SHA256 key derivation.
 
     Args:
         plaintext: The string to encrypt.
@@ -83,85 +59,42 @@ def jasypt_encrypt(plaintext: str, password: str) -> str:
 
     Returns:
         str: Base64-encoded encrypted string.
-
-    Examples:
-        >>> password = "my_secret_password"
-        >>> encrypted = jasypt_encrypt("my_secret_value", password)
-        >>> print(encrypted)
     """
-    import os
+    salt = os.urandom(_SALT_SIZE)
+    nonce = os.urandom(_NONCE_SIZE)
 
-    # Generate random salt (8 bytes)
-    salt = os.urandom(8)
+    key = _derive_key(password, salt)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), None)
 
-    # Generate key and IV using MD5 (Jasypt compatible)
-    key_iv = _generate_key_iv(password, salt)
-    key = key_iv[:8]  # DES key is 8 bytes
-    iv = key_iv[8:16]  # DES IV is 8 bytes
-
-    # Add PKCS5 padding
-    plaintext_bytes = plaintext.encode('utf-8')
-    padding_length = 8 - (len(plaintext_bytes) % 8)
-    padded_plaintext = plaintext_bytes + bytes([padding_length] * padding_length)
-
-    # Encrypt using DES
-    cipher = Cipher(TripleDES(key * 3), modes.CBC(iv))
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
-
-    # Combine salt and ciphertext, then encode to base64
-    encrypted_data = salt + ciphertext
-    return base64.b64encode(encrypted_data).decode('utf-8')
+    return base64.b64encode(salt + nonce + ciphertext).decode("utf-8")
 
 
 # ============================================================================
 # Internal Helper Functions
 # ============================================================================
 
-def _generate_key_iv(password: str, salt: bytes, iterations: int = 1000) -> bytes:
-    """
-    Generate key and IV using MD5 hashing (Jasypt compatible).
 
-    Args:
-        password: Password string.
-        salt: Salt bytes.
-        iterations: Number of iterations (default 1000 for Jasypt).
-
-    Returns:
-        bytes: Combined key and IV bytes.
-    """
-    password_bytes = password.encode('utf-8')
-
-    # First round
-    digest = hashlib.md5(password_bytes + salt).digest()
-
-    # Additional iterations
-    for _ in range(1, iterations):
-        digest = hashlib.md5(digest).digest()
-
-    # For more key material, do another round
-    digest2 = hashlib.md5(digest + password_bytes + salt).digest()
-
-    return digest + digest2
+def _derive_key(password: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(algorithm=SHA256(), length=_KEY_SIZE, salt=salt, iterations=_PBKDF2_ITERATIONS)
+    return kdf.derive(password.encode("utf-8"))
 
 
 # ============================================================================
 # Credential Encryption Utility
 # ============================================================================
 
+
 def encrypt_credentials(email: str, password: str, master_password: str) -> tuple[str, str]:
     """
     Encrypt user credentials (email and password) using a master password.
 
-    This function encrypts both the email and password using Jasypt-compatible
-    encryption. The encrypted values can be stored in authentication.py and
-    will be decrypted at runtime using the master password.
+    The encrypted values can be stored in a .env file and will be decrypted
+    at runtime using the master password.
 
     Args:
         email: User email/username to encrypt.
         password: User password to encrypt.
-        master_password: Master password used for encryption (must be provided
-                        at runtime to decrypt).
+        master_password: Master password used for encryption.
 
     Returns:
         tuple[str, str]: A tuple containing (encrypted_email, encrypted_password).
@@ -172,10 +105,7 @@ def encrypt_credentials(email: str, password: str, master_password: str) -> tupl
         ...     "mypassword",
         ...     "master_secret"
         ... )
-        >>> print(f"ENCRYPTED_USER_EMAIL = \\\"{encrypted_email}\\\"")
-        >>> print(f"ENCRYPTED_USER_PASSWORD = \\\"{encrypted_password}\\\"")
+        >>> print(f"ENCRYPTED_USER_EMAIL = \\"{encrypted_email}\\"")
+        >>> print(f"ENCRYPTED_USER_PASSWORD = \\"{encrypted_password}\\"")
     """
-    encrypted_email = jasypt_encrypt(email, master_password)
-    encrypted_password = jasypt_encrypt(password, master_password)
-
-    return encrypted_email, encrypted_password
+    return jasypt_encrypt(email, master_password), jasypt_encrypt(password, master_password)
