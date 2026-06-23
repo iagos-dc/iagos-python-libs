@@ -16,7 +16,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Run tests with coverage
         working-directory: packages/aeris-client
-        run: uv run --extra test pytest tests --cov=src --cov-report=xml:../../coverage.xml
+        run: uv run --extra test pytest tests -m "not integration" --cov=src --cov-report=xml:../../coverage.xml
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@ba3875ecf642b2129de2b589510c81a8b53dbf4e # master
         env:
